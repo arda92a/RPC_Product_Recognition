@@ -1,0 +1,50 @@
+# =============================================================================
+# RPC Dataset - YOLO Product Detection Configuration
+# =============================================================================
+
+# --- Dataset Paths ---
+dataset:
+  root: "RPC_dataset"
+  annotations:
+    train: "instances_train2019.json"
+    val: "instances_val2019.json"
+    test: "instances_test2019.json"
+  images:
+    train: "train2019"
+    val: "val2019"
+    test: "test2019"
+
+# --- YOLO Conversion Output ---
+output:
+  root: "yolo_dataset"
+
+# --- Class Definition (single-class: all 200 RPC categories → "product") ---
+classes:
+  - "product"
+
+# --- Training Parameters ---
+training:
+  model: "yolo11n.pt"            # Model: yolov8n/s/m/l/x.pt, yolo11n/s/m/l/x.pt
+  epochs: 100
+  imgsz: 640
+  batch: 16
+  device: "0"                     # "0" for GPU, "cpu", "mps" for Apple Silicon
+  workers: 8
+  optimizer: "auto"               # SGD, Adam, AdamW, auto
+  lr0: 0.01
+  lrf: 0.01                       # Final learning rate factor
+  patience: 50                    # Early stopping patience
+  project: "runs"
+  name: "rpc_product_detection"
+  pretrained: true
+  resume: false                   # Resume from last checkpoint
+  exist_ok: false                 # Overwrite existing run
+
+# --- Evaluation Parameters ---
+evaluation:
+  model: "runs/rpc_product_detection/weights/best.pt"
+  conf: 0.25
+  iou: 0.5
+  imgsz: 640
+  device: "0"
+  split: "test"                   # Which split to evaluate on
