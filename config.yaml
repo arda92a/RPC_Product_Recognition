@@ -2,9 +2,9 @@
 # RPC Dataset - YOLO Product Detection Configuration
 # =============================================================================
 
-# --- Dataset Paths ---
+# --- Dataset Paths (absolute or relative to project root) ---
 dataset:
-  root: "RPC_dataset"
+  root: "/Users/arda92/Desktop/Retail_Project/RPC_dataset"
   annotations:
     train: "instances_train2019.json"
     val: "instances_val2019.json"
@@ -14,7 +14,7 @@ dataset:
     val: "val2019"
     test: "test2019"
 
-# --- YOLO Conversion Output ---
+# --- YOLO Conversion Output (absolute or relative to project root) ---
 output:
   root: "yolo_dataset"
 

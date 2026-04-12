@@ -147,8 +147,12 @@ def convert_dataset(cfg: Config, use_symlinks: bool = True) -> Path:
     Returns the path to the generated dataset.yaml.
     """
     project_root = get_project_root()
-    dataset_root = project_root / cfg.dataset.root
-    output_root = project_root / cfg.output.root
+    dataset_root = Path(cfg.dataset.root)
+    output_root = Path(cfg.output.root)
+    if not dataset_root.is_absolute():
+        dataset_root = project_root / dataset_root
+    if not output_root.is_absolute():
+        output_root = project_root / output_root
 
     print(f"Dataset root : {dataset_root}")
     print(f"Output root  : {output_root}")
