@@ -87,11 +87,13 @@ def convert_split(
     annotation_path: Path,
     image_dir: Path,
     output_paths: Dict[str, Path],
+    class_map: Dict[int, int],
     use_symlinks: bool = True,
 ) -> int:
     """
     Convert one data split (train/val/test) from COCO to YOLO format.
 
+    class_map maps COCO category_id → YOLO class index.
     Returns the number of images processed.
     """
     print(f"[{split}] Loading annotations from {annotation_path}")
@@ -129,9 +131,11 @@ def convert_split(
 
         label_lines = []
         for ann in annotations:
+            yolo_cls = class_map.get(ann["category_id"])
+            if yolo_cls is None:
+                continue  # skip unknown categories
             xc, yc, wn, hn = coco_bbox_to_yolo(ann["bbox"], img_w, img_h)
-            # Single class: always class 0
-            label_lines.append(f"0 {xc:.6f} {yc:.6f} {wn:.6f} {hn:.6f}")
+            label_lines.append(f"{yolo_cls} {xc:.6f} {yc:.6f} {wn:.6f} {hn:.6f}")
 
         label_path.write_text("\n".join(label_lines) + "\n" if label_lines else "")
         processed += 1
@@ -144,6 +148,9 @@ def convert_dataset(cfg: Config, use_symlinks: bool = True) -> Path:
     """
     Full pipeline: convert the RPC dataset from COCO format to YOLO format.
 
+    In "single_class" mode all categories are mapped to class 0 ("product").
+    In "multi_class" mode each COCO category becomes its own YOLO class.
+
     Returns the path to the generated dataset.yaml.
     """
     project_root = get_project_root()
@@ -154,9 +161,24 @@ def convert_dataset(cfg: Config, use_symlinks: bool = True) -> Path:
     if not output_root.is_absolute():
         output_root = project_root / output_root
 
+    # Build class list and category_id → yolo_idx map from the train annotation
+    train_ann_path = dataset_root / cfg.dataset.annotations["train"]
+    with open(train_ann_path, "r") as f:
+        train_coco = json.load(f)
+
+    if cfg.mode == "multi_class":
+        categories = sorted(train_coco["categories"], key=lambda c: c["id"])
+        classes = [c["name"] for c in categories]
+        class_map: Dict[int, int] = {c["id"]: idx for idx, c in enumerate(categories)}
+    else:  # single_class
+        categories = train_coco["categories"]
+        classes = cfg.classes  # e.g. ["product"]
+        class_map = {c["id"]: 0 for c in categories}
+
     print(f"Dataset root : {dataset_root}")
     print(f"Output root  : {output_root}")
-    print(f"Classes      : {cfg.classes}")
+    print(f"Mode         : {cfg.mode}")
+    print(f"Classes      : {len(classes)} ({classes[:5]}{'...' if len(classes) > 5 else ''})")
     print(f"Symlinks     : {use_symlinks}")
     print()
 
@@ -173,8 +195,8 @@ def convert_dataset(cfg: Config, use_symlinks: bool = True) -> Path:
             print(f"[{split}] Image directory not found: {img_dir}, skipping.")
             continue
 
-        convert_split(split, ann_path, img_dir, dir_paths[split], use_symlinks)
+        convert_split(split, ann_path, img_dir, dir_paths[split], class_map, use_symlinks)
 
-    yaml_path = generate_dataset_yaml(output_root, cfg.classes)
+    yaml_path = generate_dataset_yaml(output_root, classes)
     print(f"\nDataset YAML written to: {yaml_path}")
     return yaml_path

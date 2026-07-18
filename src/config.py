@@ -65,6 +65,7 @@ class WandbConfig:
 class Config:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    mode: str = "single_class"   # "single_class" | "multi_class"
     classes: List[str] = field(default_factory=lambda: ["product"])
     training: TrainingConfig = field(default_factory=TrainingConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
@@ -92,6 +93,8 @@ def load_config(config_path: str = "config.yaml") -> Config:
         cfg.dataset = _dict_to_dataclass(DatasetConfig, raw["dataset"])
     if "output" in raw:
         cfg.output = _dict_to_dataclass(OutputConfig, raw["output"])
+    if "mode" in raw:
+        cfg.mode = raw["mode"]
     if "classes" in raw:
         cfg.classes = raw["classes"]
     if "training" in raw:
