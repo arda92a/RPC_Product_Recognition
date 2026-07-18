@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import yaml
 
@@ -55,12 +55,20 @@ class EvaluationConfig:
 
 
 @dataclass
+class WandbConfig:
+    enabled: bool = False
+    project: str = "rpc-product-detection"
+    run_name: str = "rpc_yolo_run"
+
+
+@dataclass
 class Config:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     classes: List[str] = field(default_factory=lambda: ["product"])
     training: TrainingConfig = field(default_factory=TrainingConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    wandb: WandbConfig = field(default_factory=WandbConfig)
 
 
 def _dict_to_dataclass(cls, data: dict):
@@ -90,6 +98,8 @@ def load_config(config_path: str = "config.yaml") -> Config:
         cfg.training = _dict_to_dataclass(TrainingConfig, raw["training"])
     if "evaluation" in raw:
         cfg.evaluation = _dict_to_dataclass(EvaluationConfig, raw["evaluation"])
+    if "wandb" in raw:
+        cfg.wandb = _dict_to_dataclass(WandbConfig, raw["wandb"])
 
     return cfg
 

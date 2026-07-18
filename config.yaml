@@ -48,3 +48,9 @@ evaluation:
   imgsz: 640
   device: "0"
   split: "test"                   # Which split to evaluate on
+
+# --- Weights & Biases Logging ---
+wandb:
+  enabled: true                  # Set to true to enable W&B logging
+  project: "rpc-product-detection"
+  run_name: "rpc_yolo_run"
