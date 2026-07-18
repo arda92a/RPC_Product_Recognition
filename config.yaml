@@ -4,7 +4,7 @@
 
 # --- Dataset Paths (absolute or relative to project root) ---
 dataset:
-  root: "/Users/arda92/Desktop/Retail_Project/RPC_dataset"
+  root: "/Users/arda92/RPC_Retail"
   annotations:
     train: "instances_train2019.json"
     val: "instances_val2019.json"
