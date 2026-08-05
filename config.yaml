@@ -4,7 +4,7 @@
 
 # --- Dataset Paths (absolute or relative to project root) ---
 dataset:
-  root: "/teamspace/studios/this_studio/RPC_Retail"
+  root: "/home/aoztuner/02-source/retail"
   annotations:
     train: "instances_train2019.json"
     val: "instances_val2019.json"
@@ -16,7 +16,7 @@ dataset:
 
 # --- YOLO Conversion Output (absolute or relative to project root) ---
 output:
-  root: "yolo_dataset_multiclass"
+  root: "yolo_dataset"
 
 # --- Detection Mode ---
 # "single_class" : all 200 RPC categories → one "product" class
