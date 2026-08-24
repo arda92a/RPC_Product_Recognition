@@ -62,6 +62,48 @@ class WandbConfig:
 
 
 @dataclass
+class MetricAugmentationConfig:
+    enabled: bool = True
+    output_root: str = "metric_dataset"
+    img_size: int = 224
+    padding_ratio: float = 0.10        # extra context around each bbox before cropping
+    copies_per_train_image: int = 5    # augmented copies generated per train crop
+    keep_original: bool = True         # also keep the un-augmented crop for train
+    seed: int = 42
+
+    # geometric
+    horizontal_flip_prob: float = 0.5
+    rotate_limit: int = 20
+    scale_jitter_min: float = 0.75
+    scale_jitter_max: float = 1.25
+    perspective_prob: float = 0.3
+
+    # photometric
+    color_jitter_prob: float = 0.8
+    brightness_contrast_limit: float = 0.3
+    hue_shift_limit: int = 15
+    sat_shift_limit: int = 25
+    blur_prob: float = 0.3
+    blur_limit: int = 5
+    noise_prob: float = 0.3
+
+    # occlusion
+    cutout_prob: float = 0.35
+    cutout_max_holes: int = 3
+    cutout_max_size_ratio: float = 0.2   # fraction of crop size
+
+    # copy-paste onto real checkout backgrounds (domain-gap bridging)
+    copy_paste_prob: float = 0.5
+    copy_paste_background_split: str = "val"
+    copy_paste_edge_feather: int = 7
+
+    # visualization: saves [orig | aug0 | aug1 | ...] labeled strips for manual inspection
+    preview_enabled: bool = True
+    preview_samples: int = 12
+    preview_dir: str = "_augmentation_preview"
+
+
+@dataclass
 class Config:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
@@ -70,6 +112,7 @@ class Config:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
+    metric_augmentation: MetricAugmentationConfig = field(default_factory=MetricAugmentationConfig)
 
 
 def _dict_to_dataclass(cls, data: dict):
@@ -103,6 +146,8 @@ def load_config(config_path: str = "config.yaml") -> Config:
         cfg.evaluation = _dict_to_dataclass(EvaluationConfig, raw["evaluation"])
     if "wandb" in raw:
         cfg.wandb = _dict_to_dataclass(WandbConfig, raw["wandb"])
+    if "metric_augmentation" in raw:
+        cfg.metric_augmentation = _dict_to_dataclass(MetricAugmentationConfig, raw["metric_augmentation"])
 
     return cfg
 

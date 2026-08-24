@@ -59,3 +59,51 @@ wandb:
   enabled: true                  # Set to true to enable W&B logging
   project: "rpc-product-detection"
   run_name: "rpc_multiclass_yolo"
+
+# --- Metric-Learning Dataset Augmentation ---
+# Builds per-class crop folders under metric_augmentation.output_root:
+#   metric_dataset/{train,val,test}/<category_name>/*.jpg
+# train crops (clean studio images) are multiplied via augmentation to close the
+# domain gap with val/test (real, cluttered checkout scenes). val/test crops are
+# extracted as-is (no augmentation) since they must reflect real evaluation conditions.
+metric_augmentation:
+  enabled: true
+  output_root: "metric_dataset"
+  img_size: 224
+  padding_ratio: 0.10             # extra context around each bbox before cropping
+  copies_per_train_image: 5       # augmented copies generated per train crop
+  keep_original: true             # also keep the un-augmented crop for train
+  seed: 42
+
+  # geometric
+  horizontal_flip_prob: 0.5
+  rotate_limit: 20
+  scale_jitter_min: 0.75
+  scale_jitter_max: 1.25
+  perspective_prob: 0.3
+
+  # photometric (simulate checkout camera conditions)
+  color_jitter_prob: 0.8
+  brightness_contrast_limit: 0.3
+  hue_shift_limit: 15
+  sat_shift_limit: 25
+  blur_prob: 0.3
+  blur_limit: 5
+  noise_prob: 0.3
+
+  # occlusion (hand / other products blocking the view at checkout)
+  cutout_prob: 0.35
+  cutout_max_holes: 3
+  cutout_max_size_ratio: 0.2
+
+  # copy-paste onto real checkout backgrounds — bridges the studio/checkout domain gap
+  copy_paste_prob: 0.5
+  copy_paste_background_split: "val"
+  copy_paste_edge_feather: 7
+
+  # visualization: saves [orig | aug0 | aug1 | ...] labeled strips under
+  # metric_dataset/_augmentation_preview/ so you can see what was applied
+  preview_enabled: true
+  preview_samples: 12
+  preview_dir: "_augmentation_preview"
+
