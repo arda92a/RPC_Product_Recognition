@@ -21,7 +21,7 @@ output:
 # --- Detection Mode ---
 # "single_class" : all 200 RPC categories → one "product" class
 # "multi_class"  : each of the 200 RPC categories is its own class
-mode: "multi_class"
+mode: "single_class"
 
 # --- Class Definition (used only in single_class mode) ---
 classes:
@@ -29,7 +29,7 @@ classes:
 
 # --- Training Parameters ---
 training:
-  model: "yolo11n.pt"            # Model: yolov8n/s/m/l/x.pt, yolo11n/s/m/l/x.pt
+  model: "yolo11l.pt"            # Model: yolov8n/s/m/l/x.pt, yolo11n/s/m/l/x.pt
   epochs: 100
   imgsz: 640
   batch: 16
@@ -40,14 +40,14 @@ training:
   lrf: 0.01                       # Final learning rate factor
   patience: 50                    # Early stopping patience
   project: "runs"
-  name: "rpc_multiclass_detection"
+  name: "rpc_singleclass_yolo11l"
   pretrained: true
   resume: false                   # Resume from last checkpoint
   exist_ok: false                 # Overwrite existing run
 
 # --- Evaluation Parameters ---
 evaluation:
-  model: "runs/rpc_multiclass_detection/weights/best.pt"
+  model: "runs/rpc_singleclass_yolo11l/weights/best.pt"
   conf: 0.25
   iou: 0.5
   imgsz: 640
