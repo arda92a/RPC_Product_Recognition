@@ -21,6 +21,7 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
+from tqdm import tqdm
 
 from sam3_segment import load_yolo_boxes, yolo_to_xyxy, best_mask_for_box
 
@@ -169,14 +170,14 @@ def main():
     parser.add_argument("--confidence", type=float, default=0.3)
     parser.add_argument("--visibility-thresh", type=float, default=0.3,
                          help="Min visible fraction of a pasted object to keep its bbox")
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
     device_type = "cuda" if args.device.startswith("cuda") else "cpu"
 
-    if not torch.cuda.is_available():
+    if args.device.startswith("cuda") and not torch.cuda.is_available():
         # sam3 hardcodes device="cuda" in several tensor-creation calls during model
         # construction (position encoding, decoder coords, ...) regardless of the
         # requested device; redirect those calls to cpu wherever they show up
@@ -199,14 +200,18 @@ def main():
 
     dataset_root = Path(args.dataset).expanduser()
     cutouts = []  # (source_name, bgr, alpha)
+    tried = 0
 
+    pbar = tqdm(total=args.n_products, desc="Extracting cutouts", unit="cutout")
     for img_path, (cx, cy, bw, bh) in iter_candidate_instances(dataset_root, args.split, args.seed):
         if len(cutouts) >= args.n_products:
             break
+        tried += 1
+        pbar.set_postfix(tried=tried)
         try:
             image = Image.open(img_path).convert("RGB")
         except Exception as e:
-            print(f"  skip {img_path.name}: cannot open ({e})")
+            tqdm.write(f"  skip {img_path.name}: cannot open ({e})")
             continue
 
         W, H = image.size
@@ -222,24 +227,26 @@ def main():
             if sam3_masks is not None and sam3_masks.numel() > 0 and sam3_boxes is not None:
                 mask = best_mask_for_box(box_xyxy, sam3_masks, sam3_boxes.float())
         except Exception as e:
-            print(f"  skip {img_path.name}: SAM3 failed ({e})")
+            tqdm.write(f"  skip {img_path.name}: SAM3 failed ({e})")
             continue
 
         if mask is None:
-            print(f"  skip {img_path.name}: no matching mask")
+            tqdm.write(f"  skip {img_path.name}: no matching mask")
             continue
 
         result = extract_cutout(image, mask)
         if result is None:
-            print(f"  skip {img_path.name}: empty mask")
+            tqdm.write(f"  skip {img_path.name}: empty mask")
             continue
 
         bgr, alpha = result
         cutouts.append((img_path.stem, bgr, alpha))
-        print(f"  [{len(cutouts)}/{args.n_products}] cutout from {img_path.name}")
+        tqdm.write(f"  [{len(cutouts)}/{args.n_products}] cutout from {img_path.name}")
+        pbar.update(1)
 
+    pbar.close()
     if len(cutouts) < 2:
-        print("Not enough valid cutouts extracted, aborting.")
+        print(f"Not enough valid cutouts extracted ({len(cutouts)}/{args.n_products} after {tried} images tried), aborting.")
         return
 
     # resize each cutout to a random size relative to canvas so the scene looks
