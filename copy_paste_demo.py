@@ -177,14 +177,17 @@ def main():
     device_type = "cuda" if args.device.startswith("cuda") else "cpu"
 
     if not torch.cuda.is_available():
-        # sam3's model_builder hardcodes device="cuda" for position-encoding
-        # precompute regardless of the requested device; redirect those calls to cpu
-        _orig_zeros = torch.zeros
-        def _cpu_safe_zeros(*a, **kw):
-            if kw.get("device") == "cuda":
-                kw["device"] = "cpu"
-            return _orig_zeros(*a, **kw)
-        torch.zeros = _cpu_safe_zeros
+        # sam3 hardcodes device="cuda" in several tensor-creation calls during model
+        # construction (position encoding, decoder coords, ...) regardless of the
+        # requested device; redirect those calls to cpu wherever they show up
+        def _cpu_safe(fn):
+            def wrapper(*a, **kw):
+                if kw.get("device") == "cuda":
+                    kw["device"] = "cpu"
+                return fn(*a, **kw)
+            return wrapper
+        for _name in ("zeros", "ones", "empty", "full", "arange", "tensor", "rand", "randn", "eye", "linspace"):
+            setattr(torch, _name, _cpu_safe(getattr(torch, _name)))
 
     from sam3.model_builder import build_sam3_image_model
     from sam3.model.sam3_image_processor import Sam3Processor
