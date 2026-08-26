@@ -160,7 +160,7 @@ def resolve_visible_boxes(footprints: list[np.ndarray], visibility_thresh: float
 
 def main():
     parser = argparse.ArgumentParser(description="SAM3 copy-paste single-scene proof of concept")
-    parser.add_argument("--dataset", default="yolo_dataset")
+    parser.add_argument("--dataset", default="yolo_dataset_rpc")
     parser.add_argument("--checkpoint", default="sam3.pt")
     parser.add_argument("--split", default="train")
     parser.add_argument("--n-products", type=int, default=7)
