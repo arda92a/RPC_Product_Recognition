@@ -11,16 +11,19 @@ Saves raw empirical samples + summary percentiles to a JSON file so the
 generator can sample directly from real distributions instead of guessing.
 
 Usage:
-  python analyze_dataset_stats.py --split val
-  python analyze_dataset_stats.py --split test --output test_stats.json
+  python tools/analyze_dataset_stats.py --split val
+  python tools/analyze_dataset_stats.py --split test --output test_stats.json
 """
 
 import argparse
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # allow `import src.*` when run as tools/analyze_dataset_stats.py
 
 from src.config import get_project_root, load_config
 from src.converter import build_image_annotation_map, build_image_info_map, load_coco_annotations

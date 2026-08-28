@@ -77,7 +77,7 @@ def main():
     sticker_dir = Path(args.sticker_dir)
     sticker_paths = load_sticker_paths(sticker_dir)
     if len(sticker_paths) < 2:
-        print(f"Not enough stickers found in {sticker_dir}, run extract_stickers.py first.")
+        print(f"Not enough stickers found in {sticker_dir}, run tools/extract_stickers.py first.")
         return
     print(f"Loaded {len(sticker_paths)} cached stickers from {sticker_dir}")
 

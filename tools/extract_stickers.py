@@ -6,7 +6,7 @@ Stage B (generate_copy_paste_dataset.py) can compose thousands of synthetic
 scenes without re-running SAM3 for every draw.
 
 Usage (server):
-  python extract_stickers.py --n-stickers 6000
+  python tools/extract_stickers.py --n-stickers 6000
 """
 
 import argparse
