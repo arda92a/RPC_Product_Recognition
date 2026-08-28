@@ -107,3 +107,39 @@ metric_augmentation:
   preview_samples: 12
   preview_dir: "_augmentation_preview"
 
+# --- Metric-Learning Training (DINOv3 backbone + angular-margin loss) ---
+# Reads crops produced by metric_augmentation above:
+#   metric_dataset/{train,val,test}/<category_name>/*.jpg
+# Stage 1 = linear probe (frozen backbone), Stage 2 = partial fine-tune
+# (last N transformer blocks unfrozen with a much lower LR).
+metric_training:
+  dataset_root: "metric_dataset"
+  output_dir: "runs/metric"
+
+  backbone: "dinov3_vits16"
+  backbone_source: "torchhub"      # "torchhub" | "hf"
+  hf_model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
+  embed_dim: 256
+  hidden_dim: 512
+  dropout: 0.1
+
+  loss: "cosface"                  # cosface | arcface | subcenter_arcface | circle
+  margin: 0.35
+  scale: 64.0
+  subcenters: 3
+
+  img_size: 224
+  batch_size: 128
+  num_workers: 8
+  weight_decay: 0.0005
+
+  stage1_epochs: 5
+  stage1_lr_head: 0.001
+
+  stage2_epochs: 15
+  stage2_lr_head: 0.001
+  stage2_lr_backbone: 0.00001
+  unfreeze_last_n_blocks: 4
+
+  device: "0"
+

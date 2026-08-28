@@ -104,6 +104,39 @@ class MetricAugmentationConfig:
 
 
 @dataclass
+class MetricTrainingConfig:
+    dataset_root: str = "metric_dataset"
+    output_dir: str = "runs/metric"
+
+    backbone: str = "dinov3_vits16"
+    backbone_source: str = "torchhub"   # "torchhub" | "hf"
+    hf_model_id: str = "facebook/dinov3-vits16-pretrain-lvd1689m"
+    embed_dim: int = 256
+    hidden_dim: int = 512
+    dropout: float = 0.1
+
+    loss: str = "cosface"               # cosface | arcface | subcenter_arcface | circle
+    margin: float = 0.35
+    scale: float = 64.0
+    subcenters: int = 3
+
+    img_size: int = 224
+    batch_size: int = 128
+    num_workers: int = 8
+    weight_decay: float = 5e-4
+
+    stage1_epochs: int = 5
+    stage1_lr_head: float = 1e-3
+
+    stage2_epochs: int = 15
+    stage2_lr_head: float = 1e-3
+    stage2_lr_backbone: float = 1e-5
+    unfreeze_last_n_blocks: int = 4
+
+    device: str = "0"
+
+
+@dataclass
 class Config:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
@@ -113,6 +146,7 @@ class Config:
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
     metric_augmentation: MetricAugmentationConfig = field(default_factory=MetricAugmentationConfig)
+    metric_training: MetricTrainingConfig = field(default_factory=MetricTrainingConfig)
 
 
 def _dict_to_dataclass(cls, data: dict):
@@ -148,6 +182,8 @@ def load_config(config_path: str = "config.yaml") -> Config:
         cfg.wandb = _dict_to_dataclass(WandbConfig, raw["wandb"])
     if "metric_augmentation" in raw:
         cfg.metric_augmentation = _dict_to_dataclass(MetricAugmentationConfig, raw["metric_augmentation"])
+    if "metric_training" in raw:
+        cfg.metric_training = _dict_to_dataclass(MetricTrainingConfig, raw["metric_training"])
 
     return cfg
 
