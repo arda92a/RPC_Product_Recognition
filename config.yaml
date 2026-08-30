@@ -119,6 +119,7 @@ metric_training:
   backbone: "dinov3_vits16"
   backbone_source: "torchhub"      # "torchhub" | "hf"
   hf_model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
+  backbone_checkpoint: "dino_models/dinov3_vits16_pretrain_lvd1689m-08c60483.pth"
   embed_dim: 256
   hidden_dim: 512
   dropout: 0.1

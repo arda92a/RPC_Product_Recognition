@@ -29,6 +29,13 @@ def _build_optimizer(head_params, backbone_params, lr_head, lr_backbone, weight_
     return torch.optim.AdamW(groups, weight_decay=weight_decay)
 
 
+def _resolve_checkpoint_path(checkpoint: str, project_root: Path):
+    if not checkpoint:
+        return None
+    path = Path(checkpoint)
+    return str(path if path.is_absolute() else project_root / path)
+
+
 def train_metric_model(cfg: Config) -> str:
     mc = cfg.metric_training
     project_root = get_project_root()
@@ -49,7 +56,9 @@ def train_metric_model(cfg: Config) -> str:
     val_loader = DataLoader(val_ds, batch_size=mc.batch_size, shuffle=False,
                              num_workers=mc.num_workers, pin_memory=True)
 
-    backbone = DinoV3Backbone(mc.backbone, source=mc.backbone_source, hf_model_id=mc.hf_model_id)
+    checkpoint_path = _resolve_checkpoint_path(mc.backbone_checkpoint, project_root)
+    backbone = DinoV3Backbone(mc.backbone, source=mc.backbone_source, hf_model_id=mc.hf_model_id,
+                               checkpoint_path=checkpoint_path)
     model = MetricModel(backbone, embed_dim=mc.embed_dim, hidden_dim=mc.hidden_dim,
                          dropout=mc.dropout).to(device)
     loss_fn = build_loss(mc.loss, mc.embed_dim, num_classes, mc.margin, mc.scale, mc.subcenters).to(device)

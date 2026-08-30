@@ -48,11 +48,10 @@ def build_standard_pipeline(mcfg: MetricAugmentationConfig) -> A.Compose:
         ], p=mcfg.blur_prob),
         A.GaussNoise(p=mcfg.noise_prob),
         A.CoarseDropout(
-            max_holes=mcfg.cutout_max_holes,
-            min_holes=1,
-            max_height=mcfg.cutout_max_size_ratio,
-            max_width=mcfg.cutout_max_size_ratio,
-            fill_value=0,
+            num_holes_range=(1, mcfg.cutout_max_holes),
+            hole_height_range=(mcfg.cutout_max_size_ratio, mcfg.cutout_max_size_ratio),
+            hole_width_range=(mcfg.cutout_max_size_ratio, mcfg.cutout_max_size_ratio),
+            fill=0,
             p=mcfg.cutout_prob,
         ),
     ])

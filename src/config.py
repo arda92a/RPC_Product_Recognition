@@ -111,6 +111,7 @@ class MetricTrainingConfig:
     backbone: str = "dinov3_vits16"
     backbone_source: str = "torchhub"   # "torchhub" | "hf"
     hf_model_id: str = "facebook/dinov3-vits16-pretrain-lvd1689m"
+    backbone_checkpoint: str = ""       # local .pth path, overrides downloading pretrained weights
     embed_dim: int = 256
     hidden_dim: int = 512
     dropout: float = 0.1

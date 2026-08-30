@@ -62,7 +62,12 @@ def evaluate_metric_model(cfg: Config, checkpoint_path: str,
     device = torch.device(f"cuda:{mc.device}" if use_cuda else "cpu")
 
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    backbone = DinoV3Backbone(mc.backbone, source=mc.backbone_source, hf_model_id=mc.hf_model_id)
+    backbone_checkpoint = None
+    if mc.backbone_checkpoint:
+        path = Path(mc.backbone_checkpoint)
+        backbone_checkpoint = str(path if path.is_absolute() else project_root / path)
+    backbone = DinoV3Backbone(mc.backbone, source=mc.backbone_source, hf_model_id=mc.hf_model_id,
+                               checkpoint_path=backbone_checkpoint)
     model = MetricModel(backbone, embed_dim=mc.embed_dim, hidden_dim=mc.hidden_dim,
                          dropout=mc.dropout).to(device)
     model.backbone.load_state_dict(checkpoint["backbone"])
