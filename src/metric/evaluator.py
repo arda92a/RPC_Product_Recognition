@@ -89,4 +89,17 @@ def evaluate_metric_model(cfg: Config, checkpoint_path: str,
     print("\n--- Retrieval Evaluation ---")
     for k, v in metrics.items():
         print(f"{k}: {v:.4f}")
+
+    if cfg.wandb.enabled:
+        try:
+            import wandb
+
+            wc = cfg.wandb
+            run = wandb.init(project=wc.project, name=f"{wc.run_name}-metric-eval",
+                              config={"gallery_split": gallery_split, "query_split": query_split})
+            run.log({f"retrieval/{k}": v for k, v in metrics.items()})
+            wandb.finish()
+        except ImportError:
+            print("WARNING: wandb not installed — skipping W&B logging. Run: pip install wandb")
+
     return metrics
