@@ -14,6 +14,7 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from src.config import Config, get_project_root
 from src.metric.backbone import DinoV3Backbone
@@ -142,8 +143,10 @@ def _run_epochs(model, loss_fn, train_loader, val_loader, optimizer, epochs,
                  device, best_val_acc, best_path, stage, wandb_run=None, step_offset=0):
     for epoch in range(1, epochs + 1):
         t0 = time.time()
-        train_loss, train_acc = _run_one_epoch(model, loss_fn, train_loader, device, optimizer)
-        val_loss, val_acc = _run_one_epoch(model, loss_fn, val_loader, device, optimizer=None)
+        train_loss, train_acc = _run_one_epoch(model, loss_fn, train_loader, device, optimizer,
+                                                desc=f"[{stage}] epoch {epoch}/{epochs} train")
+        val_loss, val_acc = _run_one_epoch(model, loss_fn, val_loader, device, optimizer=None,
+                                            desc=f"[{stage}] epoch {epoch}/{epochs} val")
 
         print(f"[{stage}] epoch {epoch}/{epochs} "
               f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
@@ -175,14 +178,15 @@ def _run_epochs(model, loss_fn, train_loader, val_loader, optimizer, epochs,
     return best_val_acc
 
 
-def _run_one_epoch(model, loss_fn, loader, device, optimizer=None):
+def _run_one_epoch(model, loss_fn, loader, device, optimizer=None, desc=""):
     is_train = optimizer is not None
     model.train(is_train)
     loss_fn.train(is_train)
 
     running_loss, running_correct, running_total = 0.0, 0, 0
+    pbar = tqdm(loader, desc=desc, unit="batch", leave=False)
     with torch.set_grad_enabled(is_train):
-        for images, labels in loader:
+        for images, labels in pbar:
             images, labels = images.to(device), labels.to(device)
             embeddings = model(images)
             loss, logits = loss_fn(embeddings, labels)
@@ -195,5 +199,6 @@ def _run_one_epoch(model, loss_fn, loader, device, optimizer=None):
             running_loss += loss.item() * images.size(0)
             running_correct += (logits.argmax(dim=1) == labels).sum().item()
             running_total += images.size(0)
+            pbar.set_postfix(loss=running_loss / running_total, acc=running_correct / running_total)
 
     return running_loss / running_total, running_correct / running_total

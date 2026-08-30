@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from src.config import Config, get_project_root
 from src.metric.backbone import DinoV3Backbone
@@ -17,10 +18,10 @@ from src.metric.model import MetricModel
 
 
 @torch.no_grad()
-def extract_embeddings(model: MetricModel, loader: DataLoader, device):
+def extract_embeddings(model: MetricModel, loader: DataLoader, device, desc: str = ""):
     model.eval()
     all_embeds, all_labels = [], []
-    for images, labels in loader:
+    for images, labels in tqdm(loader, desc=desc, unit="batch"):
         embeds = model(images.to(device))
         all_embeds.append(embeds.cpu())
         all_labels.append(labels)
@@ -81,9 +82,9 @@ def evaluate_metric_model(cfg: Config, checkpoint_path: str,
     query_loader = DataLoader(query_ds, batch_size=mc.batch_size, shuffle=False, num_workers=mc.num_workers)
 
     print(f"Extracting gallery embeddings ({gallery_split}, {len(gallery_ds)} crops)...")
-    gallery_emb, gallery_labels = extract_embeddings(model, gallery_loader, device)
+    gallery_emb, gallery_labels = extract_embeddings(model, gallery_loader, device, desc="gallery")
     print(f"Extracting query embeddings ({query_split}, {len(query_ds)} crops)...")
-    query_emb, query_labels = extract_embeddings(model, query_loader, device)
+    query_emb, query_labels = extract_embeddings(model, query_loader, device, desc="query")
 
     metrics = retrieval_metrics(gallery_emb, gallery_labels, query_emb, query_labels)
     print("\n--- Retrieval Evaluation ---")
