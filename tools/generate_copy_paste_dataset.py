@@ -8,9 +8,13 @@ Writes new images + YOLO labels directly into the training split (never
 val/test) so they can be trained on immediately, no SAM3 needed at this stage.
 
 Usage (server):
-  python extract_stickers.py --n-stickers 6000          # once
-  python analyze_dataset_stats.py --split val            # once
-  python generate_copy_paste_dataset.py --n-images 2000  # repeatable
+  python extract_stickers.py --n-stickers 6000                                # once
+  python analyze_dataset_stats.py --split val                                  # once
+  python generate_copy_paste_dataset.py --n-images 50000 --purge-originals     # repeatable
+
+--purge-originals removes the old single-product symlinked images/labels (i.e.
+any images/train or labels/train file NOT matching the synthetic --prefix) so
+the train split ends up purely synthetic multi-product scenes.
 """
 
 import argparse
@@ -50,12 +54,28 @@ def make_background(canvas_size: int, rng: random.Random, np_rng: np.random.Gene
     return canvas
 
 
+def purge_original_images(images_out: Path, labels_out: Path, prefix: str) -> int:
+    """Delete every images/train + labels/train file NOT produced by this script
+    (i.e. the original single-product symlinks from convert.py), keyed off the
+    synthetic filename prefix."""
+    removed = 0
+    for img_path in list(images_out.iterdir()):
+        if img_path.name.startswith(f"{prefix}_"):
+            continue
+        img_path.unlink()
+        label_path = labels_out / f"{img_path.stem}.txt"
+        if label_path.exists():
+            label_path.unlink()
+        removed += 1
+    return removed
+
+
 def main():
     parser = argparse.ArgumentParser(description="Stage B: generate synthetic copy-paste training scenes")
     parser.add_argument("--dataset", default="yolo_dataset_rpc")
     parser.add_argument("--sticker-dir", default="sticker_cache")
     parser.add_argument("--stats", default="val_stats.json")
-    parser.add_argument("--n-images", type=int, default=2000)
+    parser.add_argument("--n-images", type=int, default=50000)
     parser.add_argument("--canvas-size", type=int, default=1280)
     parser.add_argument("--visibility-thresh", type=float, default=0.3)
     parser.add_argument("--min-instances", type=int, default=3)
@@ -64,6 +84,8 @@ def main():
     parser.add_argument("--preview-every", type=int, default=200)
     parser.add_argument("--preview-dir", default="_copy_paste_preview")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--purge-originals", action="store_true",
+                         help="remove the old single-product images/labels from train (keep only synthetic)")
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
@@ -87,6 +109,10 @@ def main():
     images_out.mkdir(parents=True, exist_ok=True)
     labels_out.mkdir(parents=True, exist_ok=True)
     preview_dir = Path(args.preview_dir)
+
+    if args.purge_originals:
+        removed = purge_original_images(images_out, labels_out, args.prefix)
+        print(f"Purged {removed} original single-product images/labels from {images_out}")
 
     written = 0
     for i in tqdm(range(args.n_images), desc="Generating synthetic scenes", unit="img"):

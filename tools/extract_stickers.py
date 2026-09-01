@@ -5,13 +5,23 @@ instances and cache each product cutout (feathered BGRA sticker) to disk, so
 Stage B (generate_copy_paste_dataset.py) can compose thousands of synthetic
 scenes without re-running SAM3 for every draw.
 
+Sampling is category-stratified (round-robin over the ~200 RPC train
+categories via the COCO train annotations) rather than a flat random shuffle,
+so every product category ends up represented in the sticker cache instead of
+risking rare categories being skipped entirely.
+
 Usage (server):
-  python tools/extract_stickers.py --n-stickers 6000
+  python tools/extract_stickers.py --n-stickers 50000
+
+Note: RPC train2019 has ~53.7k single-product images total, so 50k stickers
+means near-full coverage of the split (~250/category); the actual saved count
+may land a bit lower if SAM3 fails/skips some instances.
 """
 
 import argparse
 import json
 import random
+import sys
 from pathlib import Path
 
 import cv2
@@ -23,16 +33,66 @@ from tqdm import tqdm
 from copy_paste_demo import extract_cutout
 from sam3_segment import best_mask_for_box, load_yolo_boxes, yolo_to_xyxy
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # allow `import src.*` when run as tools/extract_stickers.py
 
-def iter_all_instances(dataset_root: Path, split: str, seed: int):
-    """Yield every (image_path, box) pair across the split, image order shuffled.
-    Boxes of the same image are always yielded consecutively so the caller can
-    re-use one SAM3 image encoding per image."""
+from src.config import get_project_root, load_config
+from src.converter import build_image_annotation_map, build_image_info_map, load_coco_annotations
+
+
+def build_category_map(cfg, split: str) -> dict:
+    """file_name -> category_id, from the original COCO train annotations (train
+    images are single-product, so the first/only annotation's category is used)."""
+    project_root = get_project_root()
+    dataset_root = Path(cfg.dataset.root)
+    if not dataset_root.is_absolute():
+        dataset_root = project_root / dataset_root
+    ann_path = dataset_root / cfg.dataset.annotations[split]
+
+    coco = load_coco_annotations(ann_path)
+    img_info = build_image_info_map(coco)
+    ann_map = build_image_annotation_map(coco)
+    category_map = {}
+    for img_id, info in img_info.items():
+        anns = ann_map.get(img_id, [])
+        if anns:
+            category_map[info["file_name"]] = anns[0]["category_id"]
+    return category_map
+
+
+def iter_all_instances(dataset_root: Path, split: str, seed: int, category_map: dict = None):
+    """Yield every (image_path, box) pair across the split. Boxes of the same
+    image are always yielded consecutively so the caller can re-use one SAM3
+    image encoding per image.
+
+    If category_map is given, images are visited in category-stratified
+    round-robin order (one image per category per round) instead of a flat
+    shuffle, so an early stop at n_stickers still covers every category."""
     images_dir = dataset_root / "images" / split
     labels_dir = dataset_root / "labels" / split
     image_paths = sorted(images_dir.glob("*.jpg")) + sorted(images_dir.glob("*.png"))
     rng = random.Random(seed)
-    rng.shuffle(image_paths)
+
+    if category_map:
+        by_category = {}
+        uncategorized = []
+        for img_path in image_paths:
+            cat_id = category_map.get(img_path.name)
+            (by_category.setdefault(cat_id, []) if cat_id is not None else uncategorized).append(img_path)
+        for bucket in by_category.values():
+            rng.shuffle(bucket)
+        rng.shuffle(uncategorized)
+        buckets = list(by_category.values()) + ([uncategorized] if uncategorized else [])
+        rng.shuffle(buckets)
+        ordered = []
+        while any(buckets):
+            for bucket in buckets:
+                if bucket:
+                    ordered.append(bucket.pop())
+            buckets = [b for b in buckets if b]
+        image_paths = ordered
+    else:
+        rng.shuffle(image_paths)
+
     for img_path in image_paths:
         label_path = labels_dir / (img_path.stem + ".txt")
         boxes = load_yolo_boxes(label_path)
@@ -45,11 +105,13 @@ def main():
     parser.add_argument("--dataset", default="yolo_dataset_rpc")
     parser.add_argument("--checkpoint", default="sam3.pt")
     parser.add_argument("--split", default="train")
-    parser.add_argument("--n-stickers", type=int, default=6000)
+    parser.add_argument("--n-stickers", type=int, default=50000)
     parser.add_argument("--output", default="sticker_cache")
     parser.add_argument("--confidence", type=float, default=0.3)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--config", default="config.yaml", help="used only to locate the COCO train annotations for category-stratified sampling")
+    parser.add_argument("--no-stratify", action="store_true", help="fall back to a flat random shuffle instead of per-category round-robin")
     args = parser.parse_args()
 
     device_type = "cuda" if args.device.startswith("cuda") else "cpu"
@@ -77,6 +139,16 @@ def main():
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    category_map = None
+    if not args.no_stratify:
+        try:
+            cfg = load_config(args.config)
+            category_map = build_category_map(cfg, args.split)
+            print(f"Category-stratified sampling over {len(set(category_map.values()))} categories "
+                  f"({len(category_map)} images mapped)")
+        except Exception as e:
+            print(f"WARNING: could not build category map ({e}), falling back to flat shuffle")
+
     _geo_keys = ["geometric_prompt", "boxes", "masks", "masks_logits", "scores"]
     index = []
     saved = 0
@@ -86,7 +158,7 @@ def main():
     state = None
 
     pbar = tqdm(total=args.n_stickers, desc="Extracting stickers", unit="sticker")
-    for img_path, (cx, cy, bw, bh) in iter_all_instances(dataset_root, args.split, args.seed):
+    for img_path, (cx, cy, bw, bh) in iter_all_instances(dataset_root, args.split, args.seed, category_map):
         if saved >= args.n_stickers:
             break
         tried += 1
@@ -141,7 +213,8 @@ def main():
         bgra = np.dstack([bgr, alpha_u8])
         sticker_name = f"{img_path.stem}_{saved:06d}.png"
         cv2.imwrite(str(output_dir / sticker_name), bgra)
-        index.append({"file": sticker_name, "source": img_path.stem})
+        category_id = category_map.get(img_path.name) if category_map else None
+        index.append({"file": sticker_name, "source": img_path.stem, "category_id": category_id})
         saved += 1
         pbar.update(1)
 
