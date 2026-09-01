@@ -214,9 +214,11 @@ def evaluate_pipeline(cfg: Config, detector_path: str, metric_checkpoint: str,
     padding_ratio = cfg.metric_augmentation.padding_ratio
 
     print(f"Running detection + recognition on {len(image_paths)} test images ...\n")
-    results_iter = detector.predict(source=image_paths, conf=conf, iou=iou, imgsz=imgsz,
-                                     device=ec.device, stream=True, verbose=False)
-    for fn, result in zip(tqdm(file_names, desc="pipeline", unit="img"), results_iter):
+    # predict() one image at a time — handing ultralytics the whole 24k-path list
+    # (even with stream=True) risks it pre-scanning/buffering everything and OOMing.
+    for fn, img_path in zip(tqdm(file_names, desc="pipeline", unit="img"), image_paths):
+        result = detector.predict(source=img_path, conf=conf, iou=iou, imgsz=imgsz,
+                                   device=ec.device, verbose=False)[0]
         boxes_xyxy = result.boxes.xyxy.cpu().numpy() if len(result.boxes) else np.empty((0, 4))
         pred_counts[fn] = _classify_boxes(result.orig_img, boxes_xyxy, metric_model, transform,
                                            gallery_emb, gallery_labels, device, padding_ratio)
