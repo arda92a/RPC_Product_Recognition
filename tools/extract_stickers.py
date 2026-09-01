@@ -21,6 +21,7 @@ may land a bit lower if SAM3 fails/skips some instances.
 import argparse
 import json
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -100,30 +101,63 @@ def iter_all_instances(dataset_root: Path, split: str, seed: int, category_map: 
             yield img_path, box
 
 
-def load_existing_index(output_dir: Path) -> tuple[list, set]:
-    """Resume support: reload index.json, drop entries whose PNG is missing/corrupt
-    (freeing their disk space), and return (valid_index, {already-used source stems})."""
-    index_path = output_dir / "index.json"
-    if not index_path.exists():
-        return [], set()
+_STICKER_NAME_RE = re.compile(r"^(.+)_(\d{6})\.png$")
 
-    with open(index_path) as f:
-        raw_index = json.load(f)
+
+def load_existing_index(output_dir: Path, category_map: dict = None) -> tuple[list, set]:
+    """Resume support. Two sources of truth, merged:
+    1. index.json (if a previous run got far enough to write/flush it).
+    2. A raw directory scan for *.png stickers not listed in index.json — covers
+       runs that crashed/were killed before ever writing index.json (its own
+       write only happened at loop-exit in older code), so nothing is lost.
+    Corrupt/unreadable PNGs (e.g. partial writes from a disk-full crash) are
+    deleted to free space and are NOT counted as already-extracted.
+    """
+    index_path = output_dir / "index.json"
+    raw_index = []
+    if index_path.exists():
+        with open(index_path) as f:
+            raw_index = json.load(f)
 
     valid_index = []
     used_sources = set()
+    seen_files = set()
     dropped = 0
-    for entry in raw_index:
-        img_path = output_dir / entry["file"]
+
+    def _validate_and_add(file_name: str, source: str, category_id):
+        nonlocal dropped
+        img_path = output_dir / file_name
         bgra = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED) if img_path.exists() else None
         if bgra is None or bgra.ndim != 3 or bgra.shape[2] != 4:
             img_path.unlink(missing_ok=True)  # corrupt/partial write (e.g. disk was full) — free the space
             dropped += 1
-            continue
-        valid_index.append(entry)
-        used_sources.add(entry["source"])
+            return
+        valid_index.append({"file": file_name, "source": source, "category_id": category_id})
+        used_sources.add(source)
+        seen_files.add(file_name)
 
-    print(f"Resuming: {len(valid_index)} valid stickers already cached, {dropped} corrupt entries dropped")
+    for entry in raw_index:
+        _validate_and_add(entry["file"], entry["source"], entry.get("category_id"))
+
+    recovered = 0
+    for png_path in output_dir.glob("*.png"):
+        if png_path.name in seen_files:
+            continue
+        m = _STICKER_NAME_RE.match(png_path.name)
+        if not m:
+            continue
+        source = m.group(1)
+        category_id = None
+        if category_map:
+            category_id = category_map.get(f"{source}.jpg") or category_map.get(f"{source}.png")
+        before = len(valid_index)
+        _validate_and_add(png_path.name, source, category_id)
+        recovered += len(valid_index) - before
+
+    print(f"Resuming: {len(valid_index)} valid stickers cached ({recovered} recovered via directory scan, "
+          f"index.json had {len(raw_index)}), {dropped} corrupt files dropped")
+    with open(index_path, "w") as f:
+        json.dump(valid_index, f)
     return valid_index, used_sources
 
 
@@ -177,7 +211,7 @@ def main():
             print(f"WARNING: could not build category map ({e}), falling back to flat shuffle")
 
     _geo_keys = ["geometric_prompt", "boxes", "masks", "masks_logits", "scores"]
-    index, used_sources = load_existing_index(output_dir)
+    index, used_sources = load_existing_index(output_dir, category_map)
     saved = len(index)
     tried = 0
     current_img_path = None
