@@ -11,8 +11,12 @@ class-agnostic IoU matching between predicted and ground-truth boxes:
   - avg_count_diff: mean(|predicted instance count - GT instance count|) per
     image — a class-agnostic lower bound on the pipeline's ACD.
   - exact_match_rate: fraction of images where predicted count == GT count —
-    an upper bound on what cAcc could ever reach (a count mismatch guarantees
-    CD_i > 0 no matter how the boxes get classified).
+    an optimistic upper bound on what cAcc could ever reach (a count mismatch
+    guarantees CD_i > 0, but a matching count can still hide a FN+FP that
+    cancel out).
+  - perfect_match_rate: fraction of images where every GT instance was
+    actually IoU-matched and no spurious boxes were predicted (fn == 0 and
+    fp == 0) — the strict, honest per-instance version of exact_match_rate.
 """
 
 from pathlib import Path
@@ -82,17 +86,19 @@ def _score_level(rows: List[dict]) -> dict:
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
     avg_count_diff = float(np.mean([abs(r["pred_count"] - r["gt_count"]) for r in rows]))
     exact_match_rate = float(np.mean([r["pred_count"] == r["gt_count"] for r in rows]))
-    return {"recall": recall, "precision": precision, "f1": f1,
-            "avg_count_diff": avg_count_diff, "exact_match_rate": exact_match_rate}
+    perfect_match_rate = float(np.mean([r["fp"] == 0 and r["fn"] == 0 for r in rows]))
+    return {"recall": recall, "precision": precision, "f1": f1, "avg_count_diff": avg_count_diff,
+            "exact_match_rate": exact_match_rate, "perfect_match_rate": perfect_match_rate}
 
 
 def _print_table(rows: List[dict]):
-    order = ["diff", "recall", "precision", "f1", "avg_count_diff", "exact_match_rate"]
+    order = ["diff", "recall", "precision", "f1", "avg_count_diff", "exact_match_rate", "perfect_match_rate"]
     print("| " + " | ".join(f"{c:>14}" for c in order) + " |")
     print("| " + " | ".join("---:" for _ in order) + " |")
     for row in sorted(rows, key=lambda r: LEVEL_ORDER.get(r["diff"], 9)):
         cells = [row["diff"], f"{row['recall'] * 100:.2f}%", f"{row['precision'] * 100:.2f}%",
-                 f"{row['f1'] * 100:.2f}%", f"{row['avg_count_diff']:.2f}", f"{row['exact_match_rate'] * 100:.2f}%"]
+                 f"{row['f1'] * 100:.2f}%", f"{row['avg_count_diff']:.2f}", f"{row['exact_match_rate'] * 100:.2f}%",
+                 f"{row['perfect_match_rate'] * 100:.2f}%"]
         print("| " + " | ".join(f"{c:>14}" for c in cells) + " |")
 
 
@@ -172,7 +178,7 @@ def evaluate_detector_counting(cfg: Config, detector_path: str, conf: Optional[f
                                       "iou_match_threshold": iou_match_threshold})
             log_dict = {}
             for row in table_rows:
-                for k in ("recall", "precision", "f1", "avg_count_diff", "exact_match_rate"):
+                for k in ("recall", "precision", "f1", "avg_count_diff", "exact_match_rate", "perfect_match_rate"):
                     log_dict[f"detection/{row['diff']}/{k}"] = row[k]
             run.log(log_dict)
             wandb.finish()
