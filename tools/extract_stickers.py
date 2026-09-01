@@ -100,6 +100,33 @@ def iter_all_instances(dataset_root: Path, split: str, seed: int, category_map: 
             yield img_path, box
 
 
+def load_existing_index(output_dir: Path) -> tuple[list, set]:
+    """Resume support: reload index.json, drop entries whose PNG is missing/corrupt
+    (freeing their disk space), and return (valid_index, {already-used source stems})."""
+    index_path = output_dir / "index.json"
+    if not index_path.exists():
+        return [], set()
+
+    with open(index_path) as f:
+        raw_index = json.load(f)
+
+    valid_index = []
+    used_sources = set()
+    dropped = 0
+    for entry in raw_index:
+        img_path = output_dir / entry["file"]
+        bgra = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED) if img_path.exists() else None
+        if bgra is None or bgra.ndim != 3 or bgra.shape[2] != 4:
+            img_path.unlink(missing_ok=True)  # corrupt/partial write (e.g. disk was full) — free the space
+            dropped += 1
+            continue
+        valid_index.append(entry)
+        used_sources.add(entry["source"])
+
+    print(f"Resuming: {len(valid_index)} valid stickers already cached, {dropped} corrupt entries dropped")
+    return valid_index, used_sources
+
+
 def main():
     parser = argparse.ArgumentParser(description="Stage A: cache SAM3 product cutouts as reusable stickers")
     parser.add_argument("--dataset", default="yolo_dataset_rpc")
@@ -150,17 +177,19 @@ def main():
             print(f"WARNING: could not build category map ({e}), falling back to flat shuffle")
 
     _geo_keys = ["geometric_prompt", "boxes", "masks", "masks_logits", "scores"]
-    index = []
-    saved = 0
+    index, used_sources = load_existing_index(output_dir)
+    saved = len(index)
     tried = 0
     current_img_path = None
     current_image = None
     state = None
 
-    pbar = tqdm(total=args.n_stickers, desc="Extracting stickers", unit="sticker")
+    pbar = tqdm(total=args.n_stickers, initial=saved, desc="Extracting stickers", unit="sticker")
     for img_path, (cx, cy, bw, bh) in iter_all_instances(dataset_root, args.split, args.seed, category_map):
         if saved >= args.n_stickers:
             break
+        if img_path.stem in used_sources:
+            continue  # already extracted in a previous (resumed) run
         tried += 1
         pbar.set_postfix(tried=tried)
 
@@ -212,11 +241,25 @@ def main():
         alpha_u8 = np.clip(alpha * 255, 0, 255).astype(np.uint8)
         bgra = np.dstack([bgr, alpha_u8])
         sticker_name = f"{img_path.stem}_{saved:06d}.png"
-        cv2.imwrite(str(output_dir / sticker_name), bgra)
+        out_path = output_dir / sticker_name
+        if not cv2.imwrite(str(out_path), bgra):
+            out_path.unlink(missing_ok=True)
+            pbar.close()
+            print(f"\nERROR: cv2.imwrite failed for {out_path} (libpng \"Write Error\" usually means the disk "
+                  f"is full). Stopping here so no more GPU time is wasted.")
+            print("Free up disk space (check `df -h`) and re-run the exact same command — "
+                  "already-cached stickers are skipped automatically (resume).")
+            with open(output_dir / "index.json", "w") as f:
+                json.dump(index, f)
+            return
         category_id = category_map.get(img_path.name) if category_map else None
         index.append({"file": sticker_name, "source": img_path.stem, "category_id": category_id})
+        used_sources.add(img_path.stem)
         saved += 1
         pbar.update(1)
+        if saved % 500 == 0:
+            with open(output_dir / "index.json", "w") as f:
+                json.dump(index, f)
 
     pbar.close()
 
