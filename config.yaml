@@ -35,12 +35,12 @@ training:
   batch: 16
   device: "0"                     # "0" for GPU, "cpu", "mps" for Apple Silicon
   workers: 8
-  optimizer: "auto"               # SGD, Adam, AdamW, auto
-  lr0: 0.01
+  optimizer: "AdamW"              # was "auto" — likely picked AdamW anyway, but 0.01 is a SGD-scale LR and blew it up
+  lr0: 0.001                       # was 0.01 — that peak LR caused the epoch1(mAP50=0.94)->epoch6(0.75) collapse
   lrf: 0.01                       # Final learning rate factor
   patience: 50                    # Early stopping patience
   project: "runs"
-  name: "rpc_singleclass_yolo11l"
+  name: "rpc_singleclass_yolo11l_50k_lr_experiment"
   pretrained: true
   resume: false                   # Resume from last checkpoint
   exist_ok: false                 # Overwrite existing run
