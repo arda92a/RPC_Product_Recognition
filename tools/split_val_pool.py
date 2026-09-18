@@ -128,11 +128,18 @@ def main():
     print(f"\nWrote {clean_ann_path}")
     print(f"Wrote {unlabeled_ann_path}  (offline pseudo-label QA only — do NOT feed to training)")
 
-    clean_img_dir = dataset_root / "val2019_clean"
-    unlabeled_img_dir = dataset_root / "val2019_unlabeled"
-    link_images(val_img_dir, [img["file_name"] for img in clean_coco["images"]], clean_img_dir, not args.copy)
-    link_images(val_img_dir, [img["file_name"] for img in unlabeled_coco["images"]], unlabeled_img_dir, not args.copy)
-    print(f"Linked images into {clean_img_dir} and {unlabeled_img_dir}")
+    # images are only ever read from dataset_root (often a read-only mount) — the
+    # linked-image output dirs must live under output_dir, which is guaranteed writable
+    clean_img_dir = output_dir / "val2019_clean"
+    unlabeled_img_dir = output_dir / "val2019_unlabeled"
+    if val_img_dir.exists():
+        link_images(val_img_dir, [img["file_name"] for img in clean_coco["images"]], clean_img_dir, not args.copy)
+        link_images(val_img_dir, [img["file_name"] for img in unlabeled_coco["images"]], unlabeled_img_dir, not args.copy)
+        print(f"Linked images into {clean_img_dir} and {unlabeled_img_dir}")
+    else:
+        print(f"\nNOTE: image dir {val_img_dir} not found on this machine — annotation JSONs were "
+              f"still written, but no images were linked. Re-run this script on the machine that "
+              f"actually has val2019/ (e.g. asusgpu) to produce {clean_img_dir.name}/{unlabeled_img_dir.name}.")
 
     print("\nNext steps:")
     print("  1. Point config.yaml's dataset.images.val -> 'val2019_clean' and")
