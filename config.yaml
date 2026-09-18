@@ -7,11 +7,14 @@ dataset:
   root: "/home/aoztuner/02-source/retail"
   annotations:
     train: "instances_train2019.json"
-    val: "instances_val2019.json"
+    # absolute path overrides dataset.root (pathlib join with an absolute rhs discards the lhs) —
+    # points at the 3000-image clean half of val2019 produced by tools/split_val_pool.py, so YOLO's
+    # early-stopping signal never overlaps with the val2019_unlabeled pseudo-label pool
+    val: "/home/aoztuner/01-code/RetailProject/RPC_Product_Recognition/instances_val2019_clean.json"
     test: "instances_test2019.json"
   images:
     train: "train2019"
-    val: "val2019"
+    val: "/home/aoztuner/01-code/RetailProject/RPC_Product_Recognition/val2019_clean"
     test: "test2019"
 
 # --- YOLO Conversion Output (absolute or relative to project root) ---
