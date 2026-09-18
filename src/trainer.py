@@ -72,6 +72,9 @@ def train(cfg: Config, dataset_yaml: str = None) -> str:
         pretrained=tc.pretrained,
         resume=tc.resume,
         exist_ok=tc.exist_ok,
+        mosaic=tc.mosaic,
+        mixup=tc.mixup,
+        copy_paste=tc.copy_paste,
     )
 
     best_weights = Path(results.save_dir) / "weights" / "best.pt"

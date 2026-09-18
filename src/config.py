@@ -42,6 +42,9 @@ class TrainingConfig:
     pretrained: bool = True
     resume: bool = False
     exist_ok: bool = False
+    mosaic: float = 1.0
+    mixup: float = 0.0
+    copy_paste: float = 0.0
 
 
 @dataclass

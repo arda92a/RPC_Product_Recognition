@@ -44,6 +44,9 @@ training:
   pretrained: true
   resume: false                   # Resume from last checkpoint
   exist_ok: false                 # Overwrite existing run
+  mosaic: 0.0                      # OFF — dataset is already synthetically copy-pasted, stacking YOLO's mosaic on top hurts the tuned instance-count/size distributions
+  mixup: 0.0                       # OFF
+  copy_paste: 0.0                  # OFF — YOLO's own online copy-paste, redundant since our data already is copy-paste composited
 
 # --- Evaluation Parameters ---
 evaluation:
