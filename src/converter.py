@@ -200,3 +200,55 @@ def convert_dataset(cfg: Config, use_symlinks: bool = True) -> Path:
     yaml_path = generate_dataset_yaml(output_root, classes)
     print(f"\nDataset YAML written to: {yaml_path}")
     return yaml_path
+
+
+def convert_one_split(cfg: Config, split: str, output_root: Path = None, use_symlinks: bool = True) -> int:
+    """
+    Re-convert a single split in isolation and overwrite only that split's
+    images/labels dirs under output_root — train/test are left untouched.
+
+    Needed for regenerating just yolo_dataset_rpc's val split against the new
+    val2019_clean subset without re-running convert_dataset() (which would
+    reprocess "train" from the raw train2019 COCO annotations and re-populate
+    yolo_dataset_rpc/images/train with the original single-product images that
+    generate_copy_paste_dataset.py's --purge-originals deliberately removed).
+    """
+    project_root = get_project_root()
+    dataset_root = Path(cfg.dataset.root)
+    if not dataset_root.is_absolute():
+        dataset_root = project_root / dataset_root
+    if output_root is None:
+        output_root = Path(cfg.output.root)
+    if not output_root.is_absolute():
+        output_root = project_root / output_root
+
+    train_ann_path = dataset_root / cfg.dataset.annotations["train"]
+    with open(train_ann_path, "r") as f:
+        train_coco = json.load(f)
+
+    if cfg.mode == "multi_class":
+        categories = sorted(train_coco["categories"], key=lambda c: c["id"])
+        class_map: Dict[int, int] = {c["id"]: idx for idx, c in enumerate(categories)}
+    else:
+        class_map = {c["id"]: 0 for c in train_coco["categories"]}
+
+    ann_path = dataset_root / cfg.dataset.annotations[split]
+    img_dir = dataset_root / cfg.dataset.images[split]
+
+    out_img_dir = output_root / "images" / split
+    out_lbl_dir = output_root / "labels" / split
+    if out_img_dir.exists():
+        shutil.rmtree(out_img_dir)  # drop stale symlinks/labels from the previous (larger) split
+    if out_lbl_dir.exists():
+        shutil.rmtree(out_lbl_dir)
+    out_img_dir.mkdir(parents=True, exist_ok=True)
+    out_lbl_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Output root  : {output_root}")
+    print(f"Split        : {split}")
+    print(f"Annotations  : {ann_path}")
+    print(f"Images       : {img_dir}")
+    print()
+
+    return convert_split(split, ann_path, img_dir, {"images": out_img_dir, "labels": out_lbl_dir}, class_map, use_symlinks)
+
