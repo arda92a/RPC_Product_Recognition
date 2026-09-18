@@ -83,6 +83,9 @@ def link_images(image_dir: Path, file_names, out_dir: Path, use_symlinks: bool):
 def main():
     parser = argparse.ArgumentParser(description="Split val2019 into a clean early-stopping set and an unlabeled pseudo-label pool")
     parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--val-annotations", default=None,
+                         help="Override path to the val COCO json (default: dataset.root/annotations.val, "
+                              "or ./instances_val.json if present in the project root)")
     parser.add_argument("--clean-fraction", type=float, default=0.5,
                          help="Fraction of val2019 kept as the labeled early-stopping set (default 0.5 -> 3000/6000)")
     parser.add_argument("--seed", type=int, default=42)
@@ -95,7 +98,16 @@ def main():
     if not dataset_root.is_absolute():
         dataset_root = project_root / dataset_root
 
-    val_ann_path = dataset_root / cfg.dataset.annotations["val"]
+    local_override = project_root / "instances_val.json"
+    if args.val_annotations:
+        val_ann_path = Path(args.val_annotations)
+        output_dir = project_root
+    elif local_override.exists():
+        val_ann_path = local_override
+        output_dir = project_root
+    else:
+        val_ann_path = dataset_root / cfg.dataset.annotations["val"]
+        output_dir = dataset_root
     val_img_dir = dataset_root / cfg.dataset.images["val"]
 
     print(f"Loading val annotations from {val_ann_path}")
@@ -109,8 +121,8 @@ def main():
     clean_coco = build_subset_coco(coco_data, clean_ids)
     unlabeled_coco = build_subset_coco(coco_data, unlabeled_ids)
 
-    clean_ann_path = dataset_root / "instances_val2019_clean.json"
-    unlabeled_ann_path = dataset_root / "instances_val2019_unlabeled.json"  # QA-only, never used for training
+    clean_ann_path = output_dir / "instances_val2019_clean.json"
+    unlabeled_ann_path = output_dir / "instances_val2019_unlabeled.json"  # QA-only, never used for training
     clean_ann_path.write_text(json.dumps(clean_coco))
     unlabeled_ann_path.write_text(json.dumps(unlabeled_coco))
     print(f"\nWrote {clean_ann_path}")
