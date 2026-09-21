@@ -1,0 +1,14 @@
+# YOLO dataset config for Teacher-Student self-training:
+# Combines purely synthetic train split (50k copy-paste scenes) with
+# pseudo-labeled real checkout images (val2019_unlabeled) to bridge domain gap.
+#
+# Early-stopping & model-selection use only val2019_clean (3k real, untouched),
+# guaranteeing that the Student never trains on any val/eval signal.
+
+path: /home/aoztuner/01-code/RetailProject/RPC_Product_Recognition/yolo_dataset_rpc
+train: [images/train, images/train_pseudo]
+val: images/val
+test: images/test
+
+nc: 1
+names: ['product']
