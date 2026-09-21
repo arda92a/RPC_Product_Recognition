@@ -3,18 +3,22 @@
 Teacher inference -> pseudo-labels on the UNLABELED real checkout pool
 (val2019_unlabeled, produced by tools/split_val_pool.py).
 
-Runs the current best (synthetic-trained) detector on val2019_unlabeled with a
-high confidence threshold, drops boxes whose size is wildly inconsistent with
-the real bbox-area-ratio distribution (val_stats.json), and writes YOLO-format
-pseudo labels into <dataset-root>/images/train_pseudo + labels/train_pseudo.
+Runs the current best (synthetic-trained) detector on val2019_unlabeled once
+at a permissive confidence floor, then lets you sweep the actual keep-
+threshold against the real GT (QA only) before committing anything to disk —
+important because a threshold that's too high can leave most real instances
+unlabeled, and YOLO's loss then treats those un-boxed regions as background,
+actively teaching the Student to suppress recall on exactly the hard cases
+we're trying to fix.
 
-This directory is meant to be combined with the existing (purely synthetic)
-train split via a separate dataset_uda.yaml with
+Writes YOLO-format pseudo labels into <dataset-root>/images/train_pseudo +
+labels/train_pseudo — meant to be combined with the existing (purely
+synthetic) train split via a separate dataset_uda.yaml with
     train: [images/train, images/train_pseudo]
 so the pure-synthetic train split is never touched/overwritten.
 
 If instances_val2019_unlabeled.json (the real GT, saved by split_val_pool.py
-for QA only) is available, this script also reports the pseudo-labels'
+for QA only) is available, this script reports the pseudo-labels'
 precision/recall against it — purely diagnostic, never used to influence
 training or filtering.
 
@@ -22,15 +26,19 @@ IMPORTANT: never point --images-dir at val2019_clean or test2019 — those are
 reserved for early-stopping / final evaluation and must never be trained on.
 
 Usage:
-  python tools/generate_pseudo_labels.py --detector-checkpoint runs/.../best.pt
-  python tools/generate_pseudo_labels.py --conf 0.85 --max-images 200   # quick QA run
+  # 1) sweep thresholds first, writes nothing to disk:
+  python tools/generate_pseudo_labels.py --detector-checkpoint runs/.../best.pt \
+      --conf-sweep 0.85 0.7 0.6 0.5 0.4 0.3
+
+  # 2) once you've picked a threshold, commit it to disk:
+  python tools/generate_pseudo_labels.py --detector-checkpoint runs/.../best.pt --conf 0.5
 """
 
 import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from tqdm import tqdm
@@ -42,6 +50,8 @@ from src.config import get_project_root, load_config
 from src.converter import load_coco_annotations
 from src.detection_evaluator import _coco_to_xyxy, _match_boxes
 
+RawPreds = Dict[str, dict]  # file_name -> {"boxes": [N,4] xyxy, "scores": [N], "h": int, "w": int}
+
 
 def load_area_ratio_bounds(stats_path: Path, lo_pct: str = "p1", hi_pct: str = "p99") -> Optional[tuple]:
     if not stats_path.exists():
@@ -52,110 +62,120 @@ def load_area_ratio_bounds(stats_path: Path, lo_pct: str = "p1", hi_pct: str = "
     return s[lo_pct], s[hi_pct]
 
 
-def generate_pseudo_labels(
-    detector_path: str,
-    images_dir: Path,
-    out_images_dir: Path,
-    out_labels_dir: Path,
-    conf: float,
-    iou: float,
-    imgsz: int,
-    device: str,
-    area_ratio_bounds: Optional[tuple],
-    max_images: Optional[int] = None,
-) -> Dict[str, dict]:
-    out_images_dir.mkdir(parents=True, exist_ok=True)
-    out_labels_dir.mkdir(parents=True, exist_ok=True)
-
+def run_teacher_inference(detector_path: str, images_dir: Path, conf_floor: float, iou: float,
+                           imgsz: int, device: str, max_images: Optional[int] = None) -> RawPreds:
+    """Single inference pass at a permissive confidence floor — every threshold in
+    --conf-sweep (all >= conf_floor) is then just a post-hoc filter over these boxes."""
     image_paths = sorted(images_dir.glob("*.jpg"))
     if max_images is not None:
         image_paths = image_paths[:max_images]
 
     detector = YOLO(detector_path)
-
-    manifest: Dict[str, dict] = {}
-    total_boxes_kept, total_boxes_dropped_size, images_with_boxes = 0, 0, 0
-
-    for img_path in tqdm(image_paths, desc="pseudo-labeling", unit="img"):
-        result = detector.predict(source=str(img_path), conf=conf, iou=iou, imgsz=imgsz,
+    raw: RawPreds = {}
+    for img_path in tqdm(image_paths, desc="teacher inference", unit="img"):
+        result = detector.predict(source=str(img_path), conf=conf_floor, iou=iou, imgsz=imgsz,
                                    device=device, verbose=False)[0]
         h, w = result.orig_shape
-
-        boxes_xyxy = result.boxes.xyxy.cpu().numpy() if len(result.boxes) else np.empty((0, 4))
-        scores = result.boxes.conf.cpu().numpy() if len(result.boxes) else np.empty((0,))
-
-        lines = []
-        kept, dropped = 0, 0
-        for (x1, y1, x2, y2), score in zip(boxes_xyxy, scores):
-            area_ratio = ((x2 - x1) * (y2 - y1)) / (w * h)
-            if area_ratio_bounds is not None and not (area_ratio_bounds[0] <= area_ratio <= area_ratio_bounds[1]):
-                dropped += 1
-                continue
-            xc, yc = (x1 + x2) / 2.0 / w, (y1 + y2) / 2.0 / h
-            bw, bh = (x2 - x1) / w, (y2 - y1) / h
-            lines.append(f"0 {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}")
-            kept += 1
-
-        if kept == 0:
-            continue  # skip images with no surviving pseudo-boxes — nothing useful to train on
-
-        dst_img = out_images_dir / img_path.name
-        if not dst_img.exists():
-            dst_img.symlink_to(img_path.resolve())
-        (out_labels_dir / f"{img_path.stem}.txt").write_text("\n".join(lines) + "\n")
-
-        manifest[img_path.name] = {"kept": kept, "dropped_size": dropped, "mean_conf": float(scores.mean()) if len(scores) else 0.0}
-        total_boxes_kept += kept
-        total_boxes_dropped_size += dropped
-        images_with_boxes += 1
-
-    print(f"\nImages processed      : {len(image_paths)}")
-    print(f"Images with pseudo-lbl: {images_with_boxes}")
-    print(f"Boxes kept            : {total_boxes_kept}")
-    print(f"Boxes dropped (size)  : {total_boxes_dropped_size}")
-    return manifest
+        boxes = result.boxes.xyxy.cpu().numpy() if len(result.boxes) else np.empty((0, 4), dtype=np.float32)
+        scores = result.boxes.conf.cpu().numpy() if len(result.boxes) else np.empty((0,), dtype=np.float32)
+        raw[img_path.name] = {"boxes": boxes, "scores": scores, "h": h, "w": w}
+    return raw
 
 
-def qa_against_real_gt(unlabeled_ann_path: Path, out_labels_dir: Path, images_dir: Path,
-                        iou_threshold: float = 0.5) -> None:
-    """Diagnostic-only: compare pseudo-labels against the real GT saved by split_val_pool.py.
-    Never used to filter/influence the pseudo-labels themselves."""
+def select_boxes(entry: dict, threshold: float, area_ratio_bounds: Optional[tuple]) -> Tuple[np.ndarray, np.ndarray, int]:
+    """Filter one image's raw boxes by confidence threshold + box-size sanity. Returns (kept_boxes_xyxy, kept_scores, n_dropped_by_size)."""
+    boxes, scores, h, w = entry["boxes"], entry["scores"], entry["h"], entry["w"]
+    conf_mask = scores >= threshold
+    boxes, scores = boxes[conf_mask], scores[conf_mask]
+
+    if area_ratio_bounds is None or len(boxes) == 0:
+        return boxes, scores, 0
+
+    areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) / (w * h)
+    size_mask = (areas >= area_ratio_bounds[0]) & (areas <= area_ratio_bounds[1])
+    return boxes[size_mask], scores[size_mask], int((~size_mask).sum())
+
+
+def load_gt_by_file(unlabeled_ann_path: Path) -> Dict[str, List[list]]:
     if not unlabeled_ann_path.exists():
-        print(f"\n(No QA: {unlabeled_ann_path} not found)")
-        return
-
+        return {}
     coco = load_coco_annotations(unlabeled_ann_path)
     images = {img["id"]: img for img in coco["images"]}
-    images_by_file = {img["file_name"]: img for img in coco["images"]}
     gt_by_file: Dict[str, List[list]] = {}
     for ann in coco["annotations"]:
         img = images.get(ann["image_id"])
         if img is None:
             continue
         gt_by_file.setdefault(img["file_name"], []).append(_coco_to_xyxy(ann["bbox"]))
+    return gt_by_file
 
+
+def evaluate_threshold(raw: RawPreds, threshold: float, area_ratio_bounds: Optional[tuple],
+                        gt_by_file: Dict[str, List[list]], iou_threshold: float = 0.5) -> dict:
+    """QA-only: precision/recall of pseudo-labels at this threshold against real GT. No disk writes."""
+    images_with_boxes, boxes_kept, boxes_dropped_size = 0, 0, 0
     tp_total, fp_total, fn_total = 0, 0, 0
-    for file_name, gt_boxes in gt_by_file.items():
-        label_path = out_labels_dir / f"{Path(file_name).stem}.txt"
-        pred_boxes = []
-        if label_path.exists():
-            img = images_by_file[file_name]
-            W, H = img["width"], img["height"]
-            for line in label_path.read_text().splitlines():
-                _, xc, yc, bw, bh = (float(v) for v in line.split())
-                pred_boxes.append([(xc - bw / 2) * W, (yc - bh / 2) * H, (xc + bw / 2) * W, (yc + bh / 2) * H])
-        pred_arr = np.array(pred_boxes, dtype=np.float32) if pred_boxes else np.empty((0, 4), dtype=np.float32)
+
+    for file_name, entry in raw.items():
+        kept_boxes, kept_scores, dropped = select_boxes(entry, threshold, area_ratio_bounds)
+        boxes_kept += len(kept_boxes)
+        boxes_dropped_size += dropped
+        if len(kept_boxes) > 0:
+            images_with_boxes += 1
+
+        gt_boxes = gt_by_file.get(file_name)
+        if gt_boxes is None:
+            continue
         gt_arr = np.array(gt_boxes, dtype=np.float32)
-        scores = np.ones(len(pred_arr), dtype=np.float32)
-        tp, fp, fn = _match_boxes(pred_arr, scores, gt_arr, iou_threshold)
+        tp, fp, fn = _match_boxes(kept_boxes.astype(np.float32), kept_scores.astype(np.float32), gt_arr, iou_threshold)
         tp_total += tp
         fp_total += fp
         fn_total += fn
 
     precision = tp_total / (tp_total + fp_total) if (tp_total + fp_total) else 0.0
     recall = tp_total / (tp_total + fn_total) if (tp_total + fn_total) else 0.0
-    print("\n=== QA vs. real GT (diagnostic only, not used for filtering/training) ===")
-    print(f"pseudo-label precision: {precision:.4f}   recall: {recall:.4f}   (TP={tp_total} FP={fp_total} FN={fn_total})")
+    return {
+        "threshold": threshold, "images_with_boxes": images_with_boxes, "boxes_kept": boxes_kept,
+        "boxes_dropped_size": boxes_dropped_size, "precision": precision, "recall": recall,
+        "tp": tp_total, "fp": fp_total, "fn": fn_total,
+    }
+
+
+def write_pseudo_labels(raw: RawPreds, threshold: float, area_ratio_bounds: Optional[tuple],
+                         images_dir: Path, out_images_dir: Path, out_labels_dir: Path) -> None:
+    out_images_dir.mkdir(parents=True, exist_ok=True)
+    out_labels_dir.mkdir(parents=True, exist_ok=True)
+
+    written = 0
+    for file_name, entry in raw.items():
+        kept_boxes, _, _ = select_boxes(entry, threshold, area_ratio_bounds)
+        if len(kept_boxes) == 0:
+            continue
+        h, w = entry["h"], entry["w"]
+        lines = []
+        for x1, y1, x2, y2 in kept_boxes:
+            xc, yc = (x1 + x2) / 2.0 / w, (y1 + y2) / 2.0 / h
+            bw, bh = (x2 - x1) / w, (y2 - y1) / h
+            lines.append(f"0 {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}")
+
+        img_path = images_dir / file_name
+        dst_img = out_images_dir / file_name
+        if not dst_img.exists():
+            dst_img.symlink_to(img_path.resolve())
+        (out_labels_dir / f"{img_path.stem}.txt").write_text("\n".join(lines) + "\n")
+        written += 1
+
+    print(f"\nWrote pseudo-labels for {written}/{len(raw)} images -> {out_images_dir} / {out_labels_dir}")
+
+
+def print_sweep_table(rows: List[dict]) -> None:
+    cols = ["threshold", "images_with_boxes", "boxes_kept", "boxes_dropped_size", "precision", "recall", "tp", "fp", "fn"]
+    print("\n" + " | ".join(f"{c:>12}" for c in cols))
+    print("-" * (15 * len(cols)))
+    for row in sorted(rows, key=lambda r: -r["threshold"]):
+        cells = [f"{row['threshold']:.2f}", row["images_with_boxes"], row["boxes_kept"], row["boxes_dropped_size"],
+                 f"{row['precision']:.4f}", f"{row['recall']:.4f}", row["tp"], row["fp"], row["fn"]]
+        print(" | ".join(f"{c:>12}" for c in cells))
 
 
 def main():
@@ -168,7 +188,9 @@ def main():
                          help="Default: <project_root>/instances_val2019_unlabeled.json (QA only)")
     parser.add_argument("--dataset-root", default="yolo_dataset_rpc", help="Where images/train_pseudo + labels/train_pseudo are written")
     parser.add_argument("--stats", default="val_stats.json", help="Box-size sanity filter reference (from tools/analyze_dataset_stats.py)")
-    parser.add_argument("--conf", type=float, default=0.85)
+    parser.add_argument("--conf", type=float, default=0.85, help="Keep-threshold used to WRITE pseudo-labels (ignored if --conf-sweep given)")
+    parser.add_argument("--conf-sweep", type=float, nargs="+", default=None,
+                         help="Dry-run: report precision/recall at each threshold against real GT, write nothing to disk")
     parser.add_argument("--iou", type=float, default=0.5)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--device", default="0")
@@ -197,19 +219,36 @@ def main():
     out_labels_dir = dataset_root / "labels" / "train_pseudo"
 
     area_ratio_bounds = load_area_ratio_bounds(project_root / args.stats)
+    conf_floor = min(args.conf_sweep) if args.conf_sweep else args.conf
 
     print(f"Detector      : {detector_path}")
     print(f"Images        : {images_dir}")
-    print(f"Output        : {out_images_dir} / {out_labels_dir}")
-    print(f"conf={args.conf} iou={args.iou} imgsz={args.imgsz}")
+    print(f"conf_floor={conf_floor} iou={args.iou} imgsz={args.imgsz}")
     print(f"Area-ratio filter bounds: {area_ratio_bounds}")
     print()
 
-    generate_pseudo_labels(detector_path, images_dir, out_images_dir, out_labels_dir,
-                            args.conf, args.iou, args.imgsz, args.device,
-                            area_ratio_bounds, max_images=args.max_images)
+    raw = run_teacher_inference(detector_path, images_dir, conf_floor, args.iou, args.imgsz, args.device,
+                                 max_images=args.max_images)
+    gt_by_file = load_gt_by_file(unlabeled_ann_path)
+    if not gt_by_file:
+        print(f"(No QA: {unlabeled_ann_path} not found)")
 
-    qa_against_real_gt(unlabeled_ann_path, out_labels_dir, images_dir)
+    if args.conf_sweep:
+        rows = [evaluate_threshold(raw, t, area_ratio_bounds, gt_by_file, args.iou) for t in args.conf_sweep]
+        print_sweep_table(rows)
+        print("\nDry run only — nothing written. Re-run with --conf <chosen threshold> (no --conf-sweep) to commit to disk.")
+        return
+
+    stats = evaluate_threshold(raw, args.conf, area_ratio_bounds, gt_by_file, args.iou)
+    print(f"Images with pseudo-lbl: {stats['images_with_boxes']}")
+    print(f"Boxes kept            : {stats['boxes_kept']}")
+    print(f"Boxes dropped (size)  : {stats['boxes_dropped_size']}")
+    if gt_by_file:
+        print("\n=== QA vs. real GT (diagnostic only, not used for filtering/training) ===")
+        print(f"pseudo-label precision: {stats['precision']:.4f}   recall: {stats['recall']:.4f}   "
+              f"(TP={stats['tp']} FP={stats['fp']} FN={stats['fn']})")
+
+    write_pseudo_labels(raw, args.conf, area_ratio_bounds, images_dir, out_images_dir, out_labels_dir)
 
 
 if __name__ == "__main__":
