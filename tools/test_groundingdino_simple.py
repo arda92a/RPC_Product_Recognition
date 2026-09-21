@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-Grounding DINO product detection - Simple test on RPC data.
+Grounding DINO product detection via Hugging Face transformers.
+
+Simple, clean inference using the transformers library.
 
 Usage:
-  python test_groundingdino_simple.py
+  python test_groundingdino_simple.py [--num-test N] [--conf THRESHOLD]
 
 Requirements:
-  pip install torch torchvision
-  pip install git+https://github.com/IDEA-Research/GroundingDINO.git
+  pip install torch torchvision transformers pillow
 """
 
+import argparse
 import random
 from pathlib import Path
 
@@ -17,158 +19,176 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
+from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
 
 
 def find_test_images(start_path: str = "."):
     """Find test images directory."""
-    # Try common paths
     common_paths = [
         Path(start_path) / "test2019",
         Path(start_path) / "val2019_unlabeled",
         Path(start_path) / "data" / "test",
-        Path(start_path) / "dataset" / "test",
     ]
     
     for p in common_paths:
         if p.exists():
-            images = list(p.glob("*.jpg")) + list(p.glob("*.png"))
+            images = sorted(list(p.glob("*.jpg")) + list(p.glob("*.png")))
             if images:
-                print(f"✅ Found test dir: {p}")
+                print(f"✅ Found test dir: {p} ({len(images)} images)\n")
                 return p, images
-    
-    # Fallback: search recursively
-    for p in Path(start_path).rglob("*.jpg"):
-        if "test" in str(p).lower() or "val" in str(p).lower():
-            print(f"✅ Found test image: {p.parent}")
-            parent = p.parent
-            images = list(parent.glob("*.jpg")) + list(parent.glob("*.png"))
-            if images:
-                return parent, images
     
     raise FileNotFoundError("Could not find test images directory")
 
 
-def load_groundingdino_model():
-    """Load Grounding DINO."""
-    print("🔄 Loading Grounding DINO model...")
+def load_model():
+    """Load Grounding DINO via transformers."""
+    model_id = "IDEA-Research/grounding-dino-tiny"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    try:
-        from groundingdino.models import build_model
-        from groundingdino.util.utils import clean_state_dict
-    except ImportError:
-        print("❌ Missing: pip install git+https://github.com/IDEA-Research/GroundingDINO.git")
-        raise
+    print(f"🔄 Loading model from {model_id}...")
+    print(f"   Device: {device}\n")
     
-    # Load model
-    model_config = "groundingdino/config/GroundingDINO_SwinB.py"
-    model_checkpoint = "weights/groundingdino_swinb_cogvlm.pth"
-    
-    if not Path(model_config).exists():
-        raise FileNotFoundError(f"Config not found: {model_config}")
-    
-    model = build_model(model_config)
-    
-    if Path(model_checkpoint).exists():
-        print(f"Loading weights: {model_checkpoint}")
-        checkpoint = torch.load(model_checkpoint, map_location="cpu")
-        model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
-        print("✅ Weights loaded\n")
-    else:
-        print(f"⚠️  Weights not found: {model_checkpoint}")
-        print("   Download from: https://huggingface.co/ShilongLiu/GroundingDINO\n")
-    
-    model = model.cuda()
+    processor = AutoProcessor.from_pretrained(model_id)
+    model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(device)
     model.eval()
-    return model
-
-
-def run_inference(model, image_path, prompt: str = "product", conf_threshold: float = 0.3):
-    """Run Grounding DINO inference."""
-    from groundingdino.util.inference import predict
     
+    print("✅ Model loaded\n")
+    return model, processor, device
+
+
+def run_detection(model, processor, device, image_path, prompt: str = "product",
+                  box_threshold: float = 0.3):
+    """Run detection on a single image."""
     image = Image.open(image_path).convert("RGB")
     
-    # Run prediction
-    boxes, logits, phrases = predict(
-        model=model,
-        image=image,
-        caption=prompt,
-        box_threshold=conf_threshold,
-        text_threshold=0.25
-    )
+    # Preprocess
+    inputs = processor(images=image, text=prompt, return_tensors="pt").to(device)
     
-    return image, boxes, logits, phrases
+    # Inference
+    with torch.no_grad():
+        outputs = model(**inputs)
+    
+    # Post-process
+    target_sizes = torch.tensor([image.size[::-1]])  # (H, W)
+    results = processor.post_process_grounded_object_detection(
+        outputs,
+        inputs.input_ids,
+        box_threshold=box_threshold,
+        text_threshold=0.25,
+        target_sizes=target_sizes
+    )[0]
+    
+    return image, results
 
 
-def draw_boxes_on_image(image: Image.Image, boxes: np.ndarray, logits: np.ndarray,
-                       output_path: str = None):
-    """Draw bounding boxes on image and save."""
+def draw_and_save(image: Image.Image, results: dict, output_path: str = None):
+    """Draw boxes on image and save."""
     image_np = np.array(image)
-    h, w = image_np.shape[:2]
     
-    # Denormalize boxes (0-1 range -> pixel coordinates)
-    boxes_pixel = boxes.copy()
-    boxes_pixel[:, 0] *= w  # x1
-    boxes_pixel[:, 2] *= w  # x2
-    boxes_pixel[:, 1] *= h  # y1
-    boxes_pixel[:, 3] *= h  # y2
+    scores = results["scores"].cpu().numpy()
+    labels = results["labels"]
+    boxes = results["boxes"].cpu().numpy()
+    
+    print(f"Detections: {len(boxes)}")
+    if len(boxes) > 0:
+        print(f"Confidences: {scores}")
+        print(f"Boxes (xyxy in pixels):\n{boxes}\n")
     
     # Draw boxes
-    for i, (box, conf) in enumerate(zip(boxes_pixel, logits)):
+    for score, label, box in zip(scores, labels, boxes):
         x1, y1, x2, y2 = map(int, box)
-        # Green box
+        
+        # Green rectangle
         cv2.rectangle(image_np, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        # Label
-        label = f"product {conf:.3f}"
-        cv2.putText(image_np, label, (x1, y1 - 5),
+        
+        # Label with confidence
+        text = f"{label} {score:.3f}"
+        cv2.putText(image_np, text, (x1, y1 - 5),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
     
     # Save
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(output_path, cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR))
-        print(f"✅ Saved: {output_path}")
+        print(f"✅ Saved: {output_path}\n")
     
     return image_np
 
 
-def test_random_image(model, test_dir: Path):
+def test_random_image(model, processor, device, test_dir: Path,
+                     box_threshold: float = 0.3):
     """Test on random image."""
     images = list(test_dir.glob("*.jpg")) + list(test_dir.glob("*.png"))
     random_image = random.choice(images)
     
-    print(f"Testing: {random_image.name}\n")
+    print(f"Testing: {random_image.name}")
+    print(f"Prompt: 'product'\n")
     
-    try:
-        image, boxes, logits, phrases = run_inference(model, str(random_image))
-        
-        print(f"Image size: {image.size}")
-        print(f"Detections: {len(boxes)}")
-        if len(boxes) > 0:
-            print(f"Confidences: {logits}")
-            print(f"Box coordinates (normalized, xywh): \n{boxes}\n")
-        
-        # Draw and save
-        draw_boxes_on_image(image, boxes, logits, "visualizations/gdino_test.jpg")
-        
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+    image, results = run_detection(model, processor, device, str(random_image),
+                                  prompt="product", box_threshold=box_threshold)
+    
+    print(f"Image size: {image.size}")
+    
+    draw_and_save(image, results, "visualizations/gdino_test.jpg")
+
+
+def evaluate_multiple(model, processor, device, test_dir: Path,
+                     num_images: int = 100, box_threshold: float = 0.3):
+    """Evaluate on multiple images."""
+    images = list(test_dir.glob("*.jpg")) + list(test_dir.glob("*.png"))
+    images = images[:num_images]
+    
+    print(f"Evaluating {len(images)} images with threshold {box_threshold}...\n")
+    
+    total_detections = 0
+    images_with_detections = 0
+    
+    for i, img_path in enumerate(images):
+        try:
+            image, results = run_detection(model, processor, device, str(img_path),
+                                          prompt="product", box_threshold=box_threshold)
+            num_boxes = len(results["boxes"])
+            if num_boxes > 0:
+                total_detections += num_boxes
+                images_with_detections += 1
+                
+            if (i + 1) % 20 == 0:
+                print(f"  Processed {i+1}/{len(images)}")
+        except Exception as e:
+            print(f"Error on {img_path.name}: {e}")
+            continue
+    
+    print(f"\n{'='*60}")
+    print(f"Grounding DINO Evaluation Results")
+    print(f"{'='*60}")
+    print(f"Total images: {len(images)}")
+    print(f"Images with detections: {images_with_detections}")
+    print(f"Total boxes: {total_detections}")
+    print(f"Avg boxes per image: {total_detections / len(images):.2f}")
 
 
 def main():
     """Main entry point."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num-test", type=int, default=1,
+                       help="Number of images to test (1 = random, >1 = evaluate)")
+    parser.add_argument("--conf", type=float, default=0.3,
+                       help="Box confidence threshold")
+    args = parser.parse_args()
+    
     # Find test images
     print("🔍 Searching for test images...\n")
-    test_dir, images = find_test_images()
-    print(f"Found {len(images)} images\n")
+    test_dir, _ = find_test_images()
     
     # Load model
-    model = load_groundingdino_model()
+    model, processor, device = load_model()
     
-    # Test
-    test_random_image(model, test_dir)
+    # Run test
+    if args.num_test == 1:
+        test_random_image(model, processor, device, test_dir, box_threshold=args.conf)
+    else:
+        evaluate_multiple(model, processor, device, test_dir,
+                         num_images=args.num_test, box_threshold=args.conf)
 
 
 
