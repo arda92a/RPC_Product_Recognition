@@ -149,7 +149,6 @@ def process_split(split: str, dataset_root: Path, processor, output_path: Path,
         
         # Encode image with SAM3 once
         try:
-            # Note: autocast can cause dtype mismatch; disable for stability
             state = processor.set_image(image)
         except Exception as e:
             print(f"  [{split}] Image encode failed {img_path.name}: {e}")
@@ -282,8 +281,11 @@ def main():
     
     try:
         model = build_sam3_image_model(checkpoint_path=args.checkpoint, device=device_str)
+        # Ensure model is on the correct device and in eval mode
+        model = model.to(device_str)
+        model.eval()
         processor = Sam3Processor(model, device=device_str, confidence_threshold=0.3)
-        print(f"✓ SAM3 loaded. Device: {device_str}\n")
+        print(f"✓ SAM3 loaded and on {device_str} in eval mode\n")
     except Exception as e:
         print(f"ERROR loading SAM3: {e}")
         print("Ensure checkpoint exists at:", args.checkpoint)
