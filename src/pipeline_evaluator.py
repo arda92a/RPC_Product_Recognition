@@ -164,7 +164,8 @@ def _print_table(rows: List[dict]):
 
 def evaluate_pipeline(cfg: Config, detector_path: str, metric_checkpoint: str,
                        conf: Optional[float] = None, iou: Optional[float] = None,
-                       imgsz: Optional[int] = None, max_images: Optional[int] = None) -> Dict[str, dict]:
+                       imgsz: Optional[int] = None, max_images: Optional[int] = None,
+                       device: Optional[str] = None) -> Dict[str, dict]:
     project_root = get_project_root()
     ec = cfg.evaluation
     mc = cfg.metric_training
@@ -173,8 +174,11 @@ def evaluate_pipeline(cfg: Config, detector_path: str, metric_checkpoint: str,
     iou = ec.iou if iou is None else iou
     imgsz = ec.imgsz if imgsz is None else imgsz
 
-    use_cuda = mc.device != "cpu" and torch.cuda.is_available()
-    device = torch.device(f"cuda:{mc.device}" if use_cuda else "cpu")
+    # Determine device (override if specified, else use config)
+    device_str = device if device is not None else mc.device
+    
+    use_cuda = device_str != "cpu" and torch.cuda.is_available()
+    device = torch.device(f"cuda:{device_str}" if use_cuda else "cpu")
 
     dataset_root = Path(cfg.dataset.root)
     if not dataset_root.is_absolute():

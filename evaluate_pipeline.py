@@ -36,14 +36,10 @@ def main():
 
     detector_checkpoint = args.detector_checkpoint or str(project_root / cfg.evaluation.model)
     metric_checkpoint = args.metric_checkpoint or str(project_root / cfg.metric_training.output_dir / "best.pt")
-    
-    # Override device if specified
-    if args.device:
-        cfg.evaluation.device = args.device
-        cfg.metric_training.device = args.device
 
     evaluate_pipeline(cfg, detector_checkpoint, metric_checkpoint,
-                       conf=args.conf, iou=args.iou, imgsz=args.imgsz, max_images=args.max_images)
+                       conf=args.conf, iou=args.iou, imgsz=args.imgsz, 
+                       max_images=args.max_images, device=args.device)
 
 
 if __name__ == "__main__":
