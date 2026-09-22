@@ -261,15 +261,12 @@ def main():
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     
-    # Normalize device string
+    # Normalize device string (keep "cuda" or "cpu" as-is, convert bare "0" to "cuda")
     device_str = args.device
     if device_str.isdigit():
-        device_str = f"cuda:{device_str}"
-    elif device_str == "cpu":
-        device_str = "cpu"
-    elif not device_str.startswith("cuda:") and device_str != "cpu":
-        print(f"WARNING: Unknown device format '{args.device}', using 'cuda:0'")
-        device_str = "cuda:0"
+        # User passed bare "0" → use "cuda" (SAM3 will handle device index)
+        device_str = "cuda"
+    # Otherwise keep as-is: "cuda", "cuda:0", "cpu", etc.
     
     # Load SAM3
     print(f"Loading SAM3 from {args.checkpoint}...")
@@ -296,7 +293,7 @@ def main():
     
     for split in args.splits:
         coco_data = process_split(split, dataset_root, processor, output_dir,
-                                 args.device, iou_threshold=args.iou_threshold)
+                                 device_str, iou_threshold=args.iou_threshold)
         
         # Save JSON
         output_file = output_dir / f"instances_{split}_seg.json"
