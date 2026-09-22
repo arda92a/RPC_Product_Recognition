@@ -149,7 +149,9 @@ def process_split(split: str, dataset_root: Path, processor, output_path: Path,
         
         # Encode image with SAM3 once
         try:
-            state = processor.set_image(image)
+            # Disable autocast to prevent dtype mismatches
+            with torch.no_grad():
+                state = processor.set_image(image)
         except Exception as e:
             print(f"  [{split}] Image encode failed {img_path.name}: {e}")
             continue
@@ -168,9 +170,10 @@ def process_split(split: str, dataset_root: Path, processor, output_path: Path,
             
             mask = None
             try:
-                output = processor.add_geometric_prompt(
-                    box=[cx, cy, bw, bh], label=True, state=state
-                )
+                with torch.no_grad():
+                    output = processor.add_geometric_prompt(
+                        box=[cx, cy, bw, bh], label=True, state=state
+                    )
                 sam3_masks = output.get("masks")
                 sam3_boxes = output.get("boxes")
                 
@@ -281,11 +284,12 @@ def main():
     
     try:
         model = build_sam3_image_model(checkpoint_path=args.checkpoint, device=device_str)
-        # Ensure model is on the correct device and in eval mode
+        # Force float32 to avoid dtype mismatches
+        model = model.float()
         model = model.to(device_str)
         model.eval()
         processor = Sam3Processor(model, device=device_str, confidence_threshold=0.3)
-        print(f"✓ SAM3 loaded and on {device_str} in eval mode\n")
+        print(f"✓ SAM3 loaded in float32 on {device_str} in eval mode\n")
     except Exception as e:
         print(f"ERROR loading SAM3: {e}")
         print("Ensure checkpoint exists at:", args.checkpoint)
