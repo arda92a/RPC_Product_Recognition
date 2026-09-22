@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--conf", type=float, default=None)
     parser.add_argument("--iou", type=float, default=None)
     parser.add_argument("--imgsz", type=int, default=None)
+    parser.add_argument("--device", type=str, default=None, help="Device: '0', 'cpu', etc. (overrides config)")
     parser.add_argument("--max-images", type=int, default=None, help="Limit number of test images (debugging)")
     args = parser.parse_args()
 
@@ -35,6 +36,11 @@ def main():
 
     detector_checkpoint = args.detector_checkpoint or str(project_root / cfg.evaluation.model)
     metric_checkpoint = args.metric_checkpoint or str(project_root / cfg.metric_training.output_dir / "best.pt")
+    
+    # Override device if specified
+    if args.device:
+        cfg.evaluation.device = args.device
+        cfg.metric_training.device = args.device
 
     evaluate_pipeline(cfg, detector_checkpoint, metric_checkpoint,
                        conf=args.conf, iou=args.iou, imgsz=args.imgsz, max_images=args.max_images)
