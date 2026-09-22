@@ -261,6 +261,16 @@ def main():
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     
+    # Normalize device string
+    device_str = args.device
+    if device_str.isdigit():
+        device_str = f"cuda:{device_str}"
+    elif device_str == "cpu":
+        device_str = "cpu"
+    elif not device_str.startswith("cuda:") and device_str != "cpu":
+        print(f"WARNING: Unknown device format '{args.device}', using 'cuda:0'")
+        device_str = "cuda:0"
+    
     # Load SAM3
     print(f"Loading SAM3 from {args.checkpoint}...")
     try:
@@ -272,9 +282,9 @@ def main():
         return
     
     try:
-        model = build_sam3_image_model(checkpoint_path=args.checkpoint, device=args.device)
-        processor = Sam3Processor(model, device=args.device, confidence_threshold=0.3)
-        print(f"✓ SAM3 loaded. Device: {args.device}\n")
+        model = build_sam3_image_model(checkpoint_path=args.checkpoint, device=device_str)
+        processor = Sam3Processor(model, device=device_str, confidence_threshold=0.3)
+        print(f"✓ SAM3 loaded. Device: {device_str}\n")
     except Exception as e:
         print(f"ERROR loading SAM3: {e}")
         print("Ensure checkpoint exists at:", args.checkpoint)
