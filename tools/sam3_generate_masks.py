@@ -118,7 +118,7 @@ def process_split(split: str, dataset_root: Path, processor, output_path: Path,
     }
     
     annotation_id = 0
-    device_type = "cuda" if device.startswith("cuda") else "cpu"
+    device_type = "cuda" if "cuda" in device else "cpu"
     _geo_keys = ["geometric_prompt", "boxes", "masks", "masks_logits", "scores"]
     
     print(f"\n[{split}] Processing {len(image_paths)} images...")
@@ -149,8 +149,8 @@ def process_split(split: str, dataset_root: Path, processor, output_path: Path,
         
         # Encode image with SAM3 once
         try:
-            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                state = processor.set_image(image)
+            # Note: autocast can cause dtype mismatch; disable for stability
+            state = processor.set_image(image)
         except Exception as e:
             print(f"  [{split}] Image encode failed {img_path.name}: {e}")
             continue
@@ -169,10 +169,9 @@ def process_split(split: str, dataset_root: Path, processor, output_path: Path,
             
             mask = None
             try:
-                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                    output = processor.add_geometric_prompt(
-                        box=[cx, cy, bw, bh], label=True, state=state
-                    )
+                output = processor.add_geometric_prompt(
+                    box=[cx, cy, bw, bh], label=True, state=state
+                )
                 sam3_masks = output.get("masks")
                 sam3_boxes = output.get("boxes")
                 
